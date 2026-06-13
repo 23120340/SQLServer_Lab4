@@ -13,6 +13,7 @@ CREATE PROCEDURE SP_INS_PUBLIC_ENCRYPT_NHANVIEN
     @HOTEN NVARCHAR(100),
     @EMAIL VARCHAR(100),
     @LUONG VARBINARY(MAX),
+    @LUONG_ADMIN VARBINARY(MAX),
     @TENDN NVARCHAR(100),
     @MK    VARBINARY(20),
     @PUB   NVARCHAR(MAX),
@@ -35,12 +36,12 @@ BEGIN
     IF EXISTS (SELECT 1 FROM NHANVIEN)
        AND NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
     BEGIN
-        RAISERROR(N'Chi admin moi co quyen them nhan vien co luong.', 16, 1);
+        RAISERROR(N'Chỉ admin mới có quyền thêm nhân viên có lương.', 16, 1);
         RETURN;
     END
 
-    INSERT INTO NHANVIEN(MANV, HOTEN, EMAIL, LUONG, TENDN, MATKHAU, PUBKEY, VAITRO)
-    VALUES (@MANV, @HOTEN, @EMAIL, @LUONG, @TENDN, @MK, @PUB, @VAITRO);
+    INSERT INTO NHANVIEN(MANV, HOTEN, EMAIL, LUONG, LUONG_ADMIN, TENDN, MATKHAU, PUBKEY, VAITRO)
+    VALUES (@MANV, @HOTEN, @EMAIL, @LUONG, @LUONG_ADMIN, @TENDN, @MK, @PUB, @VAITRO);
 END
 GO
 
@@ -105,7 +106,7 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    SELECT MANV, HOTEN, EMAIL, LUONG, TENDN, PUBKEY, VAITRO
+    SELECT MANV, HOTEN, EMAIL, LUONG, LUONG_ADMIN, TENDN, PUBKEY, VAITRO
     FROM NHANVIEN
     ORDER BY MANV;
 END
@@ -117,6 +118,7 @@ GO
 CREATE PROCEDURE SP_UPD_NHANVIEN_LUONG
     @MANV VARCHAR(20),
     @LUONG VARBINARY(MAX),
+    @LUONG_ADMIN VARBINARY(MAX),
     @MANV_LOGIN VARCHAR(20)
 AS
 BEGIN
@@ -124,11 +126,11 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
     BEGIN
-        RAISERROR(N'Chi admin moi co quyen nhap hoac thay doi luong.', 16, 1);
+        RAISERROR(N'Chỉ admin mới có quyền nhập hoặc thay đổi lương.', 16, 1);
         RETURN;
     END
 
-    UPDATE NHANVIEN SET LUONG = @LUONG WHERE MANV = @MANV;
+    UPDATE NHANVIEN SET LUONG = @LUONG, LUONG_ADMIN = @LUONG_ADMIN WHERE MANV = @MANV;
 END
 GO
 
@@ -144,6 +146,22 @@ BEGIN
     SELECT PUBKEY
     FROM NHANVIEN
     WHERE MANV = @MANV;
+END
+GO
+
+IF OBJECT_ID('SP_SEL_ADMIN_PUBLICKEY','P') IS NOT NULL
+    DROP PROCEDURE SP_SEL_ADMIN_PUBLICKEY;
+GO
+CREATE PROCEDURE SP_SEL_ADMIN_PUBLICKEY
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Lấy public key của admin đầu tiên (ORDER BY MANV) để mã hóa LUONG_ADMIN
+    SELECT TOP 1 PUBKEY
+    FROM NHANVIEN
+    WHERE VAITRO = 'ADMIN'
+    ORDER BY MANV;
 END
 GO
 
@@ -167,16 +185,25 @@ GO
 CREATE PROCEDURE SP_INS_HOCPHAN
     @MAHP VARCHAR(20),
     @TENHP NVARCHAR(100),
-    @SOTC INT
+    @SOTC INT,
+    @MANV_LOGIN VARCHAR(20) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
 
     IF (@MAHP IS NULL OR LTRIM(RTRIM(@MAHP)) = '')
        OR (@TENHP IS NULL OR LTRIM(RTRIM(@TENHP)) = '')
-       OR (@SOTC IS NULL OR LTRIM(RTRIM(@SOTC)) = '')  
+       OR (@SOTC IS NULL OR LTRIM(RTRIM(@SOTC)) = '')
     BEGIN
         RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
+
+    -- Chỉ admin mới được thêm/sửa học phần (cho qua khi DB chưa có nhân viên để seed lần đầu).
+    IF EXISTS (SELECT 1 FROM NHANVIEN)
+       AND NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
+    BEGIN
+        RAISERROR(N'Chỉ admin mới có quyền thêm hoặc sửa học phần.', 16, 1);
         RETURN;
     END
 
@@ -209,7 +236,8 @@ CREATE PROCEDURE SP_INS_LOP
     @MALOP VARCHAR(20),
     @TENLOP NVARCHAR(100),
     @MANV VARCHAR(20),
-    @MAHP VARCHAR(20) = NULL
+    @MAHP VARCHAR(20) = NULL,
+    @MANV_LOGIN VARCHAR(20) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -217,9 +245,17 @@ BEGIN
     IF (@MALOP IS NULL OR LTRIM(RTRIM(@MALOP)) = '')
        OR (@TENLOP IS NULL OR LTRIM(RTRIM(@TENLOP)) = '')
        OR (@MANV IS NULL OR LTRIM(RTRIM(@MANV)) = '')
-       OR (@MAHP IS NULL OR LTRIM(RTRIM(@MAHP)) = '')  
+       OR (@MAHP IS NULL OR LTRIM(RTRIM(@MAHP)) = '')
     BEGIN
         RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
+
+    -- Chỉ admin mới được tạo lớp (cho qua khi DB chưa có nhân viên để seed lần đầu).
+    IF EXISTS (SELECT 1 FROM NHANVIEN)
+       AND NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
+    BEGIN
+        RAISERROR(N'Chỉ admin mới có quyền tạo lớp.', 16, 1);
         RETURN;
     END
 
@@ -244,10 +280,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
        AND NOT EXISTS (SELECT 1 FROM LOP WHERE MALOP = @MALOP AND MANV = @MANV_LOGIN)
     BEGIN
-        RAISERROR(N'Nhan vien dang nhap khong co quyen sua lop nay.', 16, 1);
+        RAISERROR(N'Nhân viên đang nhập không có quyền sửa lớp này.', 16, 1);
         RETURN;
     END
 
+    -- Ghi trực tiếp giá trị truyền vào (cho phép xóa rỗng); client đã cảnh báo nếu có ô trống.
     UPDATE LOP
     SET TENLOP = @TENLOP, MANV = @MANV, MAHP = @MAHP
     WHERE MALOP = @MALOP;
@@ -270,6 +307,24 @@ BEGIN
 END
 GO
 
+IF OBJECT_ID('SP_SEL_SV_ALL','P') IS NOT NULL
+    DROP PROCEDURE SP_SEL_SV_ALL;
+GO
+CREATE PROCEDURE SP_SEL_SV_ALL
+    @MANV_LOGIN VARCHAR(20)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Admin xem toàn bộ sinh viên; nhân viên thường chỉ xem SV thuộc lớp mình phụ trách.
+    SELECT SV.MASV, SV.HOTEN, SV.NGAYSINH, SV.DIACHI, SV.MALOP, SV.TENDN
+    FROM SINHVIEN SV
+    WHERE EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
+       OR EXISTS (SELECT 1 FROM LOP L WHERE L.MALOP = SV.MALOP AND L.MANV = @MANV_LOGIN)
+    ORDER BY SV.MALOP, SV.MASV;
+END
+GO
+
 IF OBJECT_ID('SP_INS_SV','P') IS NOT NULL
     DROP PROCEDURE SP_INS_SV;
 GO
@@ -288,7 +343,7 @@ BEGIN
 
     -- 1. KIỂM TRA CÁC GIÁ TRỊ ĐẦU VÀO CÓ BỊ NULL HAY KHÔNG
     -- Bạn có thể bỏ bớt các biến không bắt buộc (ví dụ: DIACHI nếu bảng cho phép NULL)
-    IF (@MANV IS NULL OR LTRIM(RTRIM(@MANV)) = '')
+    IF (@MASV IS NULL OR LTRIM(RTRIM(@MASV)) = '')
        OR (@HOTEN IS NULL OR LTRIM(RTRIM(@HOTEN)) = '')
        OR (@MK IS NULL) -- VARBINARY không dùng LTRIM được
        OR (@MALOP IS NULL OR LTRIM(RTRIM(@MALOP)) = '')
@@ -302,7 +357,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
     AND NOT EXISTS (SELECT 1 FROM LOP WHERE MALOP = @MALOP AND MANV = @MANV_LOGIN)
     BEGIN
-        RAISERROR(N'Nhan vien dang nhap khong co quyen them sinh vien vao lop nay.', 16, 1);
+        RAISERROR(N'Nhân viên đang nhập không có quyền thêm sinh viên vào lớp này.', 16, 1);
         RETURN;
     END
 
@@ -333,10 +388,11 @@ BEGIN
         WHERE SV.MASV = @MASV AND L.MANV = @MANV_LOGIN
     )
     BEGIN
-        RAISERROR(N'Nhan vien dang nhap khong co quyen sua sinh vien nay.', 16, 1);
+        RAISERROR(N'Nhân viên đang nhập không có quyền sửa sinh viên này.', 16, 1);
         RETURN;
     END
 
+    -- Ghi trực tiếp giá trị truyền vào (cho phép xóa rỗng); client đã cảnh báo nếu có ô trống.
     UPDATE SINHVIEN
     SET HOTEN = @HOTEN, NGAYSINH = @NGAYSINH, DIACHI = @DIACHI
     WHERE MASV = @MASV;
@@ -348,13 +404,20 @@ IF OBJECT_ID('SP_DEL_SV','P') IS NOT NULL
 GO
 CREATE PROCEDURE SP_DEL_SV
     @MASV NVARCHAR(20),
-    @HOTEN NVARCHAR(100),
-    @NGAYSINH DATE,
-    @DIACHI NVARCHAR(200),
+    @HOTEN NVARCHAR(100) = NULL,
+    @NGAYSINH DATE = NULL,
+    @DIACHI NVARCHAR(200) = NULL,
+    @MALOP VARCHAR(20) = NULL,
     @MANV_LOGIN VARCHAR(20)
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    IF (@MASV IS NULL OR LTRIM(RTRIM(@MASV)) = '')
+    BEGIN
+        RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
 
     IF NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
        AND NOT EXISTS (
@@ -364,11 +427,22 @@ BEGIN
         WHERE SV.MASV = @MASV AND L.MANV = @MANV_LOGIN
     )
     BEGIN
-        RAISERROR(N'Nhan vien dang nhap khong co quyen sua sinh vien nay.', 16, 1);
+        RAISERROR(N'Nhân viên đang nhập không có quyền xóa sinh viên này.', 16, 1);
         RETURN;
     END
 
-    DELETE FROM SINHVIEN WHERE MASV = @MASV;
+    -- Cascade: gỡ tham chiếu và xóa dữ liệu phụ thuộc trước (BANGDIEM, LOP.MASV) rồi mới xóa SV.
+    BEGIN TRY
+        BEGIN TRANSACTION;
+            UPDATE LOP SET MASV = NULL WHERE MASV = @MASV;
+            DELETE FROM BANGDIEM WHERE MASV = @MASV;
+            DELETE FROM SINHVIEN WHERE MASV = @MASV;
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
 END
 GO
 
@@ -377,6 +451,7 @@ IF OBJECT_ID('SP_INS_BANGDIEM_ENCRYPT','P') IS NOT NULL
 GO
 CREATE PROCEDURE SP_INS_BANGDIEM_ENCRYPT
     @MASV NVARCHAR(20),
+    @MALOP VARCHAR(20),
     @MAHP VARCHAR(20),
     @DIEMTHI VARBINARY(MAX),
     @MANV_LOGIN VARCHAR(20)
@@ -385,11 +460,12 @@ BEGIN
     SET NOCOUNT ON;
 
     IF (@MASV IS NULL OR LTRIM(RTRIM(@MASV)) = '')
+       OR (@MALOP IS NULL OR LTRIM(RTRIM(@MALOP)) = '')
        OR (@MAHP IS NULL OR LTRIM(RTRIM(@MAHP)) = '')
        OR (@DIEMTHI IS NULL)
        OR (@MANV_LOGIN IS NULL OR LTRIM(RTRIM(@MANV_LOGIN)) = '')
     BEGIN
-        RAISERROR(N'Lỗi: Thông tin sinh viên, học phần, điểm thi và người nhập không hợp lệ.', 16, 1);
+        RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
         RETURN;
     END
 
@@ -401,7 +477,19 @@ BEGIN
         WHERE SV.MASV = @MASV AND L.MANV = @MANV_LOGIN
     )
     BEGIN
-        RAISERROR(N'Nhan vien dang nhap khong co quyen nhap diem cho sinh vien nay.', 16, 1);
+        RAISERROR(N'Nhân viên đang nhập không có quyền nhập điểm cho sinh viên này.', 16, 1);
+        RETURN;
+    END
+
+    -- Sinh viên phải thuộc lớp @MALOP và lớp đó phải đúng học phần @MAHP.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM SINHVIEN SV
+        JOIN LOP L ON L.MALOP = SV.MALOP
+        WHERE SV.MASV = @MASV AND L.MALOP = @MALOP AND L.MAHP = @MAHP
+    )
+    BEGIN
+        RAISERROR(N'Mã lớp hoặc mã học phần không khớp với sinh viên. Vui lòng kiểm tra lại.', 16, 1);
         RETURN;
     END
 
@@ -420,21 +508,31 @@ IF OBJECT_ID('SP_SEL_BANGDIEM_ENCRYPT','P') IS NOT NULL
 GO
 CREATE PROCEDURE SP_SEL_BANGDIEM_ENCRYPT
     @MALOP VARCHAR(20),
+    @MAHP VARCHAR(20),
     @MANV_LOGIN VARCHAR(20)
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    SELECT SV.MASV, SV.HOTEN, BD.MAHP, HP.TENHP, BD.DIEMTHI, BD.MANV_NHAP
+    -- Mã học phần phải đúng là học phần của lớp đang tải.
+    IF NOT EXISTS (SELECT 1 FROM LOP WHERE MALOP = @MALOP AND MAHP = @MAHP)
+    BEGIN
+        RAISERROR(N'Mã lớp hoặc mã học phần không khớp. Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
+
+    -- Học phần lấy theo lớp (LOP.MAHP) nên SV chưa có điểm vẫn hiện đủ MAHP/TENHP.
+    SELECT SV.MASV, SV.HOTEN, L.MAHP, HP.TENHP, BD.DIEMTHI, BD.MANV_NHAP
     FROM SINHVIEN SV
-    LEFT JOIN BANGDIEM BD ON BD.MASV = SV.MASV
-    LEFT JOIN HOCPHAN HP ON HP.MAHP = BD.MAHP
+    JOIN LOP L ON L.MALOP = SV.MALOP
+    LEFT JOIN HOCPHAN HP ON HP.MAHP = L.MAHP
+    LEFT JOIN BANGDIEM BD ON BD.MASV = SV.MASV AND BD.MAHP = L.MAHP
     WHERE SV.MALOP = @MALOP
       AND (
           EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
-          OR EXISTS (SELECT 1 FROM LOP L WHERE L.MALOP = SV.MALOP AND L.MANV = @MANV_LOGIN)
+          OR EXISTS (SELECT 1 FROM LOP L2 WHERE L2.MALOP = SV.MALOP AND L2.MANV = @MANV_LOGIN)
       )
-    ORDER BY SV.MASV, BD.MAHP;
+    ORDER BY SV.MASV;
 END
 GO
 

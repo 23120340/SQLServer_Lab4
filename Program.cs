@@ -41,6 +41,14 @@ internal static class Db
     }
 
     public static SqlParameter P(string name, object? value) => new(name, value ?? DBNull.Value);
+
+    public static string AdminPublicKey()
+    {
+        var table = Query("SP_SEL_ADMIN_PUBLICKEY");
+        if (table.Rows.Count == 0)
+            throw new InvalidOperationException("Chưa có tài khoản ADMIN trong hệ thống.");
+        return table.Rows[0]["PUBKEY"].ToString()!;
+    }
 }
 
 internal sealed record Session(string Manv, string Hoten, string Role, string Password, byte[] PrivateKey)
@@ -74,6 +82,12 @@ internal static class PasswordCache
         privateKey = [];
         return false;
     }
+
+    public static void Clear()
+    {
+        Passwords.Clear();
+        PrivateKeys.Clear();
+    }
 }
 
 internal static class Crypto
@@ -98,7 +112,7 @@ internal static class Crypto
     {
         var path = KeyPath(manv);
         if (!File.Exists(path))
-            throw new InvalidOperationException($"Khong tim thay private key cua {manv}: {path}");
+            throw new InvalidOperationException($"Không tìm thấy private key của {manv}: {path}");
         return UnprotectPrivateKey(File.ReadAllBytes(path), password);
     }
 
@@ -167,30 +181,47 @@ internal sealed class LoginForm : Form
 
     public LoginForm()
     {
-        Text = "SQLServer Lab4 - Dang nhap";
-        Width = 470;
-        Height = 310;
+        Text = "SQLServer Lab4 - Đăng nhập";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ClientSize = new Size(430, 300);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), RowCount = 6, ColumnCount = 2 };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        AddRow(panel, 0, "Server", _server);
-        AddRow(panel, 1, "Database", _database);
-        AddRow(panel, 2, "MANV", _manv);
-        AddRow(panel, 3, "Mat khau", _password);
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), RowCount = 6, ColumnCount = 2 };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (var i = 0; i < 4; i++)
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
 
-        var login = new Button { Text = "Dang nhap", Dock = DockStyle.Fill, Height = 34 };
+        AddRow(root, 0, "Server", _server);
+        AddRow(root, 1, "Database", _database);
+        AddRow(root, 2, "MANV", _manv);
+        AddRow(root, 3, "Mật khẩu", _password);
+
+        // Hàng nút chính: "Đăng nhập" trải hết chiều ngang.
+        var login = new Button { Text = "Đăng nhập", Dock = DockStyle.Fill, Margin = new Padding(2, 8, 2, 4) };
         login.Click += (_, _) => Login();
-        var seed = new Button { Text = "Seed mau", Dock = DockStyle.Fill, Height = 34 };
-        seed.Click += (_, _) => Seed();
-        var register = new Button { Text = "Register", Dock = DockStyle.Fill, Height = 34 };
-        register.Click += (_, _) => { ApplyConnection(); new RegisterForm().ShowDialog(this); };
+        root.Controls.Add(login, 0, 4);
+        root.SetColumnSpan(login, 2);
 
-        panel.Controls.Add(login, 0, 4);
-        panel.Controls.Add(seed, 1, 4);
-        panel.Controls.Add(register, 1, 5);
-        Controls.Add(panel);
+        // Hàng nút phụ: "Seed mẫu" và "Đăng ký" chia đôi đều nhau.
+        var secondary = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
+        secondary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        secondary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var seed = new Button { Text = "Seed mẫu", Dock = DockStyle.Fill, Margin = new Padding(2, 2, 4, 2) };
+        seed.Click += (_, _) => Seed();
+        var register = new Button { Text = "Đăng ký", Dock = DockStyle.Fill, Margin = new Padding(4, 2, 2, 2) };
+        register.Click += (_, _) => { ApplyConnection(); new RegisterForm().ShowDialog(this); };
+        secondary.Controls.Add(seed, 0, 0);
+        secondary.Controls.Add(register, 1, 0);
+        root.Controls.Add(secondary, 0, 5);
+        root.SetColumnSpan(secondary, 2);
+
+        AcceptButton = login;   // nhấn Enter để đăng nhập
+        Controls.Add(root);
     }
 
     private static void AddRow(TableLayoutPanel panel, int row, string label, Control input)
@@ -213,7 +244,7 @@ internal sealed class LoginForm : Form
             var table = Db.Query("SP_LOGIN_NHANVIEN", Db.P("@MANV", _manv.Text.Trim()), Db.P("@MK", Crypto.Sha1(_password.Text)));
             if (table.Rows.Count == 0)
             {
-                MessageBox.Show("Sai MANV hoac mat khau.");
+                MessageBox.Show("Sai MANV hoặc mật khẩu.");
                 return;
             }
 
@@ -222,11 +253,12 @@ internal sealed class LoginForm : Form
             var row = table.Rows[0];
             Hide();
             new MainForm(new Session((string)row["MANV"], (string)row["HOTEN"], (string)row["VAITRO"], _password.Text, privateKey)).ShowDialog();
+            PasswordCache.Clear();
             Show();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Dang nhap loi");
+            MessageBox.Show(ex.Message, "Đăng nhập lỗi");
         }
     }
 
@@ -240,17 +272,17 @@ internal sealed class LoginForm : Form
             SeedEmployee("NV02", "Tran Thi B", "ttb@hcmus", "4500000", "TTB", "pass02", "NHANVIEN", "ADMIN");
             SeedEmployee("NV03", "Le Van C", "lvc@hcmus", "5200000", "LVC", "pass03", "NHANVIEN", "ADMIN");
 
-            SafeExec("SP_INS_LOP", Db.P("@MALOP", "L01"), Db.P("@TENLOP", "Lop CSDL K21"), Db.P("@MANV", "NV01"), Db.P("@MAHP", "CSDL"));
-            SafeExec("SP_INS_LOP", Db.P("@MALOP", "L02"), Db.P("@TENLOP", "Lop ATBM K21"), Db.P("@MANV", "NV02"), Db.P("@MAHP", "ATBM"));
+            SafeExec("SP_INS_LOP", Db.P("@MALOP", "L01"), Db.P("@TENLOP", "Lop CSDL K21"), Db.P("@MANV", "NV01"), Db.P("@MAHP", "CSDL"), Db.P("@MANV_LOGIN", "ADMIN"));
+            SafeExec("SP_INS_LOP", Db.P("@MALOP", "L02"), Db.P("@TENLOP", "Lop ATBM K21"), Db.P("@MANV", "NV02"), Db.P("@MAHP", "ATBM"), Db.P("@MANV_LOGIN", "ADMIN"));
             SafeExec("SP_INS_SV", Db.P("@MASV", "SV001"), Db.P("@HOTEN", "Pham Van Sinh"), Db.P("@NGAYSINH", new DateTime(2003, 5, 10)), Db.P("@DIACHI", "TPHCM"), Db.P("@MALOP", "L01"), Db.P("@TENDN", "SV001"), Db.P("@MK", Crypto.Sha1("123")), Db.P("@MANV_LOGIN", "NV01"));
             SafeExec("SP_INS_SV", Db.P("@MASV", "SV002"), Db.P("@HOTEN", "Vo Thi Hoa"), Db.P("@NGAYSINH", new DateTime(2003, 8, 22)), Db.P("@DIACHI", "Dong Nai"), Db.P("@MALOP", "L01"), Db.P("@TENDN", "SV002"), Db.P("@MK", Crypto.Sha1("123")), Db.P("@MANV_LOGIN", "NV01"));
             SafeExec("SP_INS_SV", Db.P("@MASV", "SV003"), Db.P("@HOTEN", "Hoang Minh"), Db.P("@NGAYSINH", new DateTime(2003, 2, 14)), Db.P("@DIACHI", "Binh Duong"), Db.P("@MALOP", "L02"), Db.P("@TENDN", "SV003"), Db.P("@MK", Crypto.Sha1("123")), Db.P("@MANV_LOGIN", "NV02"));
 
-            MessageBox.Show("Da tao du lieu mau. Admin: ADMIN/admin123. NV: NV01/abcd12, NV02/pass02, NV03/pass03.");
+            MessageBox.Show("Đã tạo dữ liệu mẫu. Admin: ADMIN/admin123. NV: NV01/abcd12, NV02/pass02, NV03/pass03.");
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Seed loi");
+            MessageBox.Show(ex.Message, "Seed lỗi");
         }
     }
 
@@ -262,11 +294,17 @@ internal sealed class LoginForm : Form
         var keyPair = Crypto.CreateKeyPair(password);
         Crypto.SavePrivateKey(manv, keyPair.EncryptedPrivateKey);
         PasswordCache.Remember(manv, password, Crypto.LoadPrivateKey(manv, password));
+
+        // LUONG: mã hóa bằng public key của chính nhân viên (chỉ họ tự xem được).
+        // LUONG_ADMIN: mã hóa bằng public key của admin (để admin luôn giải mã được).
+        // Khi seed chính ADMIN thì chưa có admin trong DB, dùng luôn public key vừa tạo.
+        var adminPub = role == "ADMIN" ? keyPair.PublicKey : Db.AdminPublicKey();
         SafeExec("SP_INS_PUBLIC_ENCRYPT_NHANVIEN",
             Db.P("@MANV", manv),
             Db.P("@HOTEN", hoten),
             Db.P("@EMAIL", email),
             Db.P("@LUONG", Crypto.EncryptText(keyPair.PublicKey, salary)),
+            Db.P("@LUONG_ADMIN", Crypto.EncryptText(adminPub, salary)),
             Db.P("@TENDN", tendn),
             Db.P("@MK", Crypto.Sha1(password)),
             Db.P("@PUB", keyPair.PublicKey),
@@ -291,33 +329,27 @@ internal sealed class RegisterForm : Form
 
     public RegisterForm()
     {
-        Text = "Register nhan vien";
-        Width = 430;
-        Height = 260;
+        Text = "Đăng ký nhân viên";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ClientSize = new Size(560, 180);
         StartPosition = FormStartPosition.CenterParent;
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), RowCount = 6, ColumnCount = 2 };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        AddRow(panel, 0, "MANV", _manv);
-        AddRow(panel, 1, "Ho ten", _hoten);
-        AddRow(panel, 2, "Email", _email);
-        AddRow(panel, 3, "Ten DN", _tendn);
-        AddRow(panel, 4, "Mat khau", _password);
-        var register = new Button { Text = "Tao account", Dock = DockStyle.Fill };
-        register.Click += (_, _) => Register();
-        panel.Controls.Add(register, 1, 5);
-        Controls.Add(panel);
-    }
+        Padding = new Padding(14);
 
-    private static void AddRow(TableLayoutPanel panel, int row, string label, Control input)
-    {
-        input.Dock = DockStyle.Fill;
-        panel.Controls.Add(new Label { Text = label, Anchor = AnchorStyles.Left, AutoSize = true }, 0, row);
-        panel.Controls.Add(input, 1, row);
+        var form = MainForm.FormGrid(("MANV", _manv), ("Họ tên", _hoten), ("Email", _email), ("Tên ĐN", _tendn), ("Mật khẩu", _password));
+        var register = new Button { Text = "Tạo tài khoản", Dock = DockStyle.Bottom, Height = 38 };
+        register.Click += (_, _) => Register();
+
+        Controls.Add(form);       // FormGrid đã Dock=Top
+        Controls.Add(register);   // ghim đáy, luôn hiển thị đủ
     }
 
     private void Register()
     {
+        if (!MainForm.Require(("MANV", _manv.Text), ("Họ tên", _hoten.Text), ("Tên ĐN", _tendn.Text), ("Mật khẩu", _password.Text)))
+            return;
+
         try
         {
             var keyPair = Crypto.CreateKeyPair(_password.Text);
@@ -330,12 +362,12 @@ internal sealed class RegisterForm : Form
                 Db.P("@TENDN", _tendn.Text.Trim()),
                 Db.P("@MK", Crypto.Sha1(_password.Text)),
                 Db.P("@PUB", keyPair.PublicKey));
-            MessageBox.Show("Da tao account nhan vien. Admin co the cap nhat luong sau.");
+            MessageBox.Show("Đã tạo tài khoản nhân viên. Admin có thể cập nhật lương sau.");
             Close();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Register loi");
+            MessageBox.Show(ex.Message, "Đăng ký lỗi");
         }
     }
 }
@@ -365,7 +397,8 @@ internal sealed class MainForm : Form
 
     private readonly TextBox _sMasv = new();
     private readonly TextBox _sHoten = new();
-    private readonly DateTimePicker _sNgaysinh = new() { Format = DateTimePickerFormat.Short };
+    // ShowCheckBox: bỏ tick = "không đổi ngày sinh" (khi sửa) / "không nhập" (khi thêm).
+    private readonly DateTimePicker _sNgaysinh = new() { Format = DateTimePickerFormat.Short, ShowCheckBox = true, Checked = false };
     private readonly TextBox _sDiachi = new();
     private readonly TextBox _sMalop = new() { Text = "L01" };
     private readonly TextBox _sTendn = new();
@@ -399,13 +432,13 @@ internal sealed class MainForm : Form
 
     private TabPage EmployeeTab()
     {
-        var page = Page("Nhan vien");
-        var form = FormGrid(("MANV", _eManv), ("Ho ten", _eHoten), ("Email", _eEmail), ("Luong", _eLuong), ("Ten DN", _eTendn), ("Mat khau", _eMk), ("Role", _eRole));
-        var add = new Button { Text = "Them NV", Width = 110, Height = 30, Enabled = _session.IsAdmin };
+        var page = Page("Nhân viên");
+        var form = FormGrid(("MANV", _eManv), ("Họ tên", _eHoten), ("Email", _eEmail), ("Lương", _eLuong), ("Tên ĐN", _eTendn), ("Mật khẩu", _eMk), ("Role", _eRole));
+        var add = new Button { Text = "Thêm NV", Width = 110, Height = 30, Enabled = _session.IsAdmin };
         add.Click += (_, _) => AddEmployee();
-        var salary = new Button { Text = "Cap nhat luong", Width = 130, Height = 30, Enabled = _session.IsAdmin };
+        var salary = new Button { Text = "Cập nhật lương", Width = 130, Height = 30, Enabled = _session.IsAdmin };
         salary.Click += (_, _) => UpdateSalary();
-        var reload = new Button { Text = "Tai lai", Width = 90, Height = 30 };
+        var reload = new Button { Text = "Tải lại", Width = 90, Height = 30 };
         reload.Click += (_, _) => LoadEmployees();
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 42 };
         buttons.Controls.Add(add);
@@ -419,9 +452,9 @@ internal sealed class MainForm : Form
 
     private TabPage ClassTab()
     {
-        var page = Page("Lop hoc");
-        var form = FormGrid(("Ma lop", _lMalop), ("Ten lop", _lTenlop), ("MANV", _lManv), ("MAHP", _lMahp));
-        var buttons = Buttons(("Them lop", AddClass), ("Sua lop", UpdateClass), ("Tai lai", LoadClasses));
+        var page = Page("Lớp học");
+        var form = FormGrid(("Mã lớp", _lMalop), ("Tên lớp", _lTenlop), ("MANV", _lManv), ("MAHP", _lMahp));
+        var buttons = Buttons(("Thêm lớp", AddClass), ("Sửa lớp", UpdateClass), ("Tải lại", LoadClasses));
         page.Controls.Add(_classes);
         page.Controls.Add(buttons);
         page.Controls.Add(form);
@@ -430,9 +463,9 @@ internal sealed class MainForm : Form
 
     private TabPage StudentTab()
     {
-        var page = Page("Sinh vien");
-        var form = FormGrid(("MASV", _sMasv), ("Ho ten", _sHoten), ("Ngay sinh", _sNgaysinh), ("Dia chi", _sDiachi), ("Ma lop", _sMalop), ("Ten DN", _sTendn), ("Mat khau", _sMk));
-        var buttons = Buttons(("Them SV", AddStudent), ("Sua SV", UpdateStudent), ("Xoa SV", DeleteStudent), ("Tai lop", LoadStudents));
+        var page = Page("Sinh viên");
+        var form = FormGrid(("MASV", _sMasv), ("Họ tên", _sHoten), ("Ngày sinh", _sNgaysinh), ("Địa chỉ", _sDiachi), ("Mã lớp", _sMalop), ("Tên ĐN", _sTendn), ("Mật khẩu", _sMk));
+        var buttons = Buttons(("Thêm SV", AddStudent), ("Sửa SV", UpdateStudent), ("Xóa SV", DeleteStudent), ("Tải lớp", LoadStudents), ("Xem tất cả SV", LoadAllStudents));
         page.Controls.Add(_students);
         page.Controls.Add(buttons);
         page.Controls.Add(form);
@@ -441,9 +474,9 @@ internal sealed class MainForm : Form
 
     private TabPage ScoreTab()
     {
-        var page = Page("Bang diem");
-        var form = FormGrid(("Ma lop", _scoreMalop), ("MASV", _scoreMasv), ("MAHP", _scoreMahp), ("Diem", _scoreDiem));
-        var buttons = Buttons(("Tai diem", LoadScores), ("Nhap diem", SaveScore));
+        var page = Page("Bảng điểm");
+        var form = FormGrid(("Mã lớp", _scoreMalop), ("MASV", _scoreMasv), ("MAHP", _scoreMahp), ("Điểm", _scoreDiem));
+        var buttons = Buttons(("Tải điểm", LoadScores), ("Nhập điểm", SaveScore));
         page.Controls.Add(_scores);
         page.Controls.Add(buttons);
         page.Controls.Add(form);
@@ -454,22 +487,28 @@ internal sealed class MainForm : Form
     {
         if (!_session.IsAdmin)
         {
-            MessageBox.Show("Chi admin moi co quyen them nhan vien co luong.");
+            MessageBox.Show("Chỉ admin mới có quyền thêm nhân viên có lương.");
             return;
         }
+
+        if (!Require(("MANV", _eManv.Text), ("Họ tên", _eHoten.Text), ("Lương", _eLuong.Text), ("Tên ĐN", _eTendn.Text), ("Mật khẩu", _eMk.Text)))
+            return;
 
         try
         {
             var keyPair = Crypto.CreateKeyPair(_eMk.Text);
             Crypto.SavePrivateKey(_eManv.Text.Trim(), keyPair.EncryptedPrivateKey);
             PasswordCache.Remember(_eManv.Text.Trim(), _eMk.Text, Crypto.LoadPrivateKey(_eManv.Text.Trim(), _eMk.Text));
-            var encryptedSalary = Crypto.EncryptText(keyPair.PublicKey, _eLuong.Text.Trim());
+            var salary = _eLuong.Text.Trim();
+            var encryptedSalary = Crypto.EncryptText(keyPair.PublicKey, salary);
+            var encryptedForAdmin = Crypto.EncryptText(Db.AdminPublicKey(), salary);
 
             Db.Exec("SP_INS_PUBLIC_ENCRYPT_NHANVIEN",
                 Db.P("@MANV", _eManv.Text.Trim()),
                 Db.P("@HOTEN", _eHoten.Text.Trim()),
                 Db.P("@EMAIL", _eEmail.Text.Trim()),
                 Db.P("@LUONG", encryptedSalary),
+                Db.P("@LUONG_ADMIN", encryptedForAdmin),
                 Db.P("@TENDN", _eTendn.Text.Trim()),
                 Db.P("@MK", Crypto.Sha1(_eMk.Text)),
                 Db.P("@PUB", keyPair.PublicKey),
@@ -491,14 +530,16 @@ internal sealed class MainForm : Form
             var pubTable = Db.Query("SP_SEL_NHANVIEN_PUBLICKEY", Db.P("@MANV", manv));
             if (pubTable.Rows.Count == 0)
             {
-                MessageBox.Show("Khong tim thay nhan vien.");
+                MessageBox.Show("Không tìm thấy nhân viên.");
                 return;
             }
 
             var pub = pubTable.Rows[0]["PUBKEY"].ToString()!;
+            var salary = _eLuong.Text.Trim();
             Db.Exec("SP_UPD_NHANVIEN_LUONG",
                 Db.P("@MANV", manv),
-                Db.P("@LUONG", Crypto.EncryptText(pub, _eLuong.Text.Trim())),
+                Db.P("@LUONG", Crypto.EncryptText(pub, salary)),
+                Db.P("@LUONG_ADMIN", Crypto.EncryptText(Db.AdminPublicKey(), salary)),
                 Db.P("@MANV_LOGIN", _session.Manv));
             LoadEmployees();
         }
@@ -516,10 +557,21 @@ internal sealed class MainForm : Form
             foreach (DataRow row in table.Rows)
             {
                 var manv = (string)row["MANV"];
-                if (row["LUONG"] != DBNull.Value && PasswordCache.TryGetPrivateKey(manv, out var privateKey))
-                    row["LUONG_GIAIMA"] = Crypto.DecryptText(privateKey, (byte[])row["LUONG"]);
+                string? plain = null;
+
+                // Admin giải mã LUONG_ADMIN bằng private key của admin -> xem được lương mọi người.
+                if (_session.IsAdmin && row["LUONG_ADMIN"] != DBNull.Value)
+                    plain = Crypto.DecryptText(_session.PrivateKey, (byte[])row["LUONG_ADMIN"]);
+                // Nhân viên thường chỉ giải mã được lương của chính mình bằng private key riêng.
+                else if (row["LUONG"] != DBNull.Value && PasswordCache.TryGetPrivateKey(manv, out var privateKey))
+                    plain = Crypto.DecryptText(privateKey, (byte[])row["LUONG"]);
+
+                if (plain != null)
+                    row["LUONG_GIAIMA"] = plain;
+                else if (row["LUONG"] != DBNull.Value)
+                    row["LUONG_GIAIMA"] = BitConverter.ToString((byte[])row["LUONG"]).Replace("-", "");
                 else
-                    row["LUONG_GIAIMA"] = "(chua co password/private key trong cache)";
+                    row["LUONG_GIAIMA"] = "";
             }
 
             _employees.DataSource = table;
@@ -530,9 +582,12 @@ internal sealed class MainForm : Form
 
     private void AddClass()
     {
+        if (!Require(("Mã lớp", _lMalop.Text), ("Tên lớp", _lTenlop.Text), ("MANV", _lManv.Text), ("MAHP", _lMahp.Text)))
+            return;
+
         try
         {
-            Db.Exec("SP_INS_LOP", Db.P("@MALOP", _lMalop.Text.Trim()), Db.P("@TENLOP", _lTenlop.Text.Trim()), Db.P("@MANV", _lManv.Text.Trim()), Db.P("@MAHP", EmptyToNull(_lMahp.Text)));
+            Db.Exec("SP_INS_LOP", Db.P("@MALOP", _lMalop.Text.Trim()), Db.P("@TENLOP", _lTenlop.Text.Trim()), Db.P("@MANV", _lManv.Text.Trim()), Db.P("@MAHP", EmptyToNull(_lMahp.Text)), Db.P("@MANV_LOGIN", _session.Manv));
             LoadClasses();
         }
         catch (Exception ex) { MessageBox.Show(ex.Message); }
@@ -540,9 +595,12 @@ internal sealed class MainForm : Form
 
     private void UpdateClass()
     {
+        if (!ConfirmBlanks(("Tên lớp", string.IsNullOrWhiteSpace(_lTenlop.Text)), ("MANV", string.IsNullOrWhiteSpace(_lManv.Text)), ("MAHP", string.IsNullOrWhiteSpace(_lMahp.Text))))
+            return;
+
         try
         {
-            Db.Exec("SP_UPD_LOP", Db.P("@MALOP", _lMalop.Text.Trim()), Db.P("@TENLOP", _lTenlop.Text.Trim()), Db.P("@MANV", _lManv.Text.Trim()), Db.P("@MAHP", EmptyToNull(_lMahp.Text)), Db.P("@MANV_LOGIN", _session.Manv));
+            Db.Exec("SP_UPD_LOP", Db.P("@MALOP", _lMalop.Text.Trim()), Db.P("@TENLOP", _lTenlop.Text.Trim()), Db.P("@MANV", EmptyToNull(_lManv.Text)), Db.P("@MAHP", EmptyToNull(_lMahp.Text)), Db.P("@MANV_LOGIN", _session.Manv));
             LoadClasses();
         }
         catch (Exception ex) { MessageBox.Show(ex.Message); }
@@ -554,14 +612,20 @@ internal sealed class MainForm : Form
         catch (Exception ex) { MessageBox.Show(ex.Message); }
     }
 
+    // Trả về ngày khi người dùng có tick chọn, ngược lại NULL (không nhập / không đổi).
+    private object? NgaySinhValue() => _sNgaysinh.Checked ? _sNgaysinh.Value.Date : null;
+
     private void AddStudent()
     {
+        if (!Require(("MASV", _sMasv.Text), ("Họ tên", _sHoten.Text), ("Mã lớp", _sMalop.Text), ("Tên ĐN", _sTendn.Text), ("Mật khẩu", _sMk.Text)))
+            return;
+
         try
         {
             Db.Exec("SP_INS_SV",
                 Db.P("@MASV", _sMasv.Text.Trim()),
                 Db.P("@HOTEN", _sHoten.Text.Trim()),
-                Db.P("@NGAYSINH", _sNgaysinh.Value.Date),
+                Db.P("@NGAYSINH", NgaySinhValue()),
                 Db.P("@DIACHI", _sDiachi.Text.Trim()),
                 Db.P("@MALOP", _sMalop.Text.Trim()),
                 Db.P("@TENDN", _sTendn.Text.Trim()),
@@ -574,12 +638,15 @@ internal sealed class MainForm : Form
 
     private void UpdateStudent()
     {
+        if (!ConfirmBlanks(("Họ tên", string.IsNullOrWhiteSpace(_sHoten.Text)), ("Ngày sinh", !_sNgaysinh.Checked), ("Địa chỉ", string.IsNullOrWhiteSpace(_sDiachi.Text))))
+            return;
+
         try
         {
             Db.Exec("SP_UPD_SV",
                 Db.P("@MASV", _sMasv.Text.Trim()),
                 Db.P("@HOTEN", _sHoten.Text.Trim()),
-                Db.P("@NGAYSINH", _sNgaysinh.Value.Date),
+                Db.P("@NGAYSINH", NgaySinhValue()),
                 Db.P("@DIACHI", _sDiachi.Text.Trim()),
                 Db.P("@MANV_LOGIN", _session.Manv));
             LoadStudents();
@@ -608,11 +675,21 @@ internal sealed class MainForm : Form
         catch (Exception ex) { MessageBox.Show(ex.Message); }
     }
 
+    private void LoadAllStudents()
+    {
+        // Admin xem toàn bộ SV; nhân viên thường chỉ thấy SV thuộc lớp mình phụ trách.
+        try { _students.DataSource = Db.Query("SP_SEL_SV_ALL", Db.P("@MANV_LOGIN", _session.Manv)); }
+        catch (Exception ex) { MessageBox.Show(ex.Message); }
+    }
+
     private void LoadScores()
     {
+        if (!Require(("Mã lớp", _scoreMalop.Text), ("MAHP", _scoreMahp.Text)))
+            return;
+
         try
         {
-            var table = Db.Query("SP_SEL_BANGDIEM_ENCRYPT", Db.P("@MALOP", _scoreMalop.Text.Trim()), Db.P("@MANV_LOGIN", _session.Manv));
+            var table = Db.Query("SP_SEL_BANGDIEM_ENCRYPT", Db.P("@MALOP", _scoreMalop.Text.Trim()), Db.P("@MAHP", _scoreMahp.Text.Trim()), Db.P("@MANV_LOGIN", _session.Manv));
             if (!table.Columns.Contains("DIEM_GIAIMA"))
                 table.Columns.Add("DIEM_GIAIMA", typeof(string));
 
@@ -632,11 +709,14 @@ internal sealed class MainForm : Form
 
     private void SaveScore()
     {
+        if (!Require(("Mã lớp", _scoreMalop.Text), ("MASV", _scoreMasv.Text), ("MAHP", _scoreMahp.Text), ("Điểm", _scoreDiem.Text)))
+            return;
+
         try
         {
             var pub = Db.Query("SP_SEL_NHANVIEN_PUBLICKEY", Db.P("@MANV", _session.Manv)).Rows[0]["PUBKEY"].ToString()!;
             var cipher = Crypto.EncryptText(pub, _scoreDiem.Text.Trim());
-            Db.Exec("SP_INS_BANGDIEM_ENCRYPT", Db.P("@MASV", _scoreMasv.Text.Trim()), Db.P("@MAHP", _scoreMahp.Text.Trim()), Db.P("@DIEMTHI", cipher), Db.P("@MANV_LOGIN", _session.Manv));
+            Db.Exec("SP_INS_BANGDIEM_ENCRYPT", Db.P("@MASV", _scoreMasv.Text.Trim()), Db.P("@MALOP", _scoreMalop.Text.Trim()), Db.P("@MAHP", _scoreMahp.Text.Trim()), Db.P("@DIEMTHI", cipher), Db.P("@MANV_LOGIN", _session.Manv));
             LoadScores();
         }
         catch (Exception ex) { MessageBox.Show(ex.Message); }
@@ -653,15 +733,35 @@ internal sealed class MainForm : Form
         SelectionMode = DataGridViewSelectionMode.FullRowSelect
     };
 
-    private static TableLayoutPanel FormGrid(params (string Label, Control Input)[] fields)
+    // Bố cục form dùng chung: 2 cặp [nhãn | ô nhập] trên mỗi hàng để ô nhập luôn đủ rộng,
+    // không bị bóp khi tab có nhiều trường (vd tab Nhân viên 7 trường).
+    internal static TableLayoutPanel FormGrid(params (string Label, Control Input)[] fields)
     {
-        var panel = new TableLayoutPanel { Dock = DockStyle.Top, Height = 90, ColumnCount = fields.Length, RowCount = 2, Padding = new Padding(0, 0, 0, 6) };
+        const int rowHeight = 30;
+        var rows = (fields.Length + 1) / 2;
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 4,
+            RowCount = rows,
+            Height = rows * rowHeight + 10,
+            Padding = new Padding(0, 0, 0, 8)
+        };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 95));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        for (var r = 0; r < rows; r++)
+            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, rowHeight));
+
         for (var i = 0; i < fields.Length; i++)
         {
-            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / fields.Length));
+            var row = i / 2;
+            var pair = (i % 2) * 2;
             fields[i].Input.Dock = DockStyle.Fill;
-            panel.Controls.Add(new Label { Text = fields[i].Label, Dock = DockStyle.Fill }, i, 0);
-            panel.Controls.Add(fields[i].Input, i, 1);
+            fields[i].Input.Margin = new Padding(2, 3, 8, 3);
+            panel.Controls.Add(new Label { Text = fields[i].Label, Anchor = AnchorStyles.Left, AutoSize = true, Margin = new Padding(2, 7, 2, 0) }, pair, row);
+            panel.Controls.Add(fields[i].Input, pair + 1, row);
         }
         return panel;
     }
@@ -680,11 +780,34 @@ internal sealed class MainForm : Form
 
     private static object? EmptyToNull(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
+    // Kiểm tra các trường bắt buộc trước khi Thêm. Mật khẩu được hash ở client nên SP không
+    // bắt được rỗng -> phải chặn tại đây. Trả về false nếu còn ô trống (đã báo cho người dùng).
+    internal static bool Require(params (string Label, string Value)[] fields)
+    {
+        var missing = fields.Where(f => string.IsNullOrWhiteSpace(f.Value)).Select(f => f.Label).ToList();
+        if (missing.Count == 0)
+            return true;
+        MessageBox.Show("Vui lòng nhập đầy đủ: " + string.Join(", ", missing), "Thiếu thông tin");
+        return false;
+    }
+
+    // Khi sửa: nếu có ô để trống thì cảnh báo (vì có thể là cố ý xóa thông tin) và để người dùng
+    // xác nhận. Trả về true nếu không có ô trống hoặc người dùng đồng ý tiếp tục.
+    internal static bool ConfirmBlanks(params (string Label, bool IsBlank)[] fields)
+    {
+        var blanks = fields.Where(f => f.IsBlank).Select(f => f.Label).ToList();
+        if (blanks.Count == 0)
+            return true;
+        return MessageBox.Show(
+            "Các ô sau đang để trống và sẽ XÓA thông tin cũ: " + string.Join(", ", blanks) + "\n\nBạn có chắc muốn tiếp tục?",
+            "Cảnh báo ô trống", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+    }
+
     private static void HideBinaryColumns(DataGridView grid)
     {
         foreach (DataGridViewColumn col in grid.Columns)
         {
-            if (col.Name is "LUONG" or "DIEMTHI" or "PUBKEY")
+            if (col.Name is "LUONG" or "LUONG_ADMIN" or "DIEMTHI" or "PUBKEY")
                 col.Visible = false;
         }
     }
