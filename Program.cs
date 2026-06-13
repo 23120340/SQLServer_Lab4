@@ -432,7 +432,7 @@ internal sealed class MainForm : Form
     {
         var page = Page("Sinh vien");
         var form = FormGrid(("MASV", _sMasv), ("Ho ten", _sHoten), ("Ngay sinh", _sNgaysinh), ("Dia chi", _sDiachi), ("Ma lop", _sMalop), ("Ten DN", _sTendn), ("Mat khau", _sMk));
-        var buttons = Buttons(("Them SV", AddStudent), ("Sua SV", UpdateStudent), ("Tai lop", LoadStudents));
+        var buttons = Buttons(("Them SV", AddStudent), ("Sua SV", UpdateStudent), ("Xoa SV", DeleteStudent), ("Tai lop", LoadStudents));
         page.Controls.Add(_students);
         page.Controls.Add(buttons);
         page.Controls.Add(form);
@@ -577,6 +577,21 @@ internal sealed class MainForm : Form
         try
         {
             Db.Exec("SP_UPD_SV",
+                Db.P("@MASV", _sMasv.Text.Trim()),
+                Db.P("@HOTEN", _sHoten.Text.Trim()),
+                Db.P("@NGAYSINH", _sNgaysinh.Value.Date),
+                Db.P("@DIACHI", _sDiachi.Text.Trim()),
+                Db.P("@MANV_LOGIN", _session.Manv));
+            LoadStudents();
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message); }
+    }
+
+    private void DeleteStudent()
+    {
+        try
+        {
+            Db.Exec("SP_DEL_SV",
                 Db.P("@MASV", _sMasv.Text.Trim()),
                 Db.P("@HOTEN", _sHoten.Text.Trim()),
                 Db.P("@NGAYSINH", _sNgaysinh.Value.Date),

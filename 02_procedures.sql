@@ -22,6 +22,16 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF (@MANV IS NULL OR LTRIM(RTRIM(@MANV)) = '')
+       OR (@HOTEN IS NULL OR LTRIM(RTRIM(@HOTEN)) = '')
+       OR (@TENDN IS NULL OR LTRIM(RTRIM(@TENDN)) = '')
+       OR (@MK IS NULL) -- VARBINARY không dùng LTRIM được
+       OR (@PUB IS NULL OR LTRIM(RTRIM(@PUB)) = '')
+    BEGIN
+        RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
+
     IF EXISTS (SELECT 1 FROM NHANVIEN)
        AND NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
     BEGIN
@@ -162,6 +172,14 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    IF (@MAHP IS NULL OR LTRIM(RTRIM(@MAHP)) = '')
+       OR (@TENHP IS NULL OR LTRIM(RTRIM(@TENHP)) = '')
+       OR (@SOTC IS NULL OR LTRIM(RTRIM(@SOTC)) = '')  
+    BEGIN
+        RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
+
     IF EXISTS (SELECT 1 FROM HOCPHAN WHERE MAHP = @MAHP)
         UPDATE HOCPHAN SET TENHP = @TENHP, SOTC = @SOTC WHERE MAHP = @MAHP;
     ELSE
@@ -195,6 +213,15 @@ CREATE PROCEDURE SP_INS_LOP
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    IF (@MALOP IS NULL OR LTRIM(RTRIM(@MALOP)) = '')
+       OR (@TENLOP IS NULL OR LTRIM(RTRIM(@TENLOP)) = '')
+       OR (@MANV IS NULL OR LTRIM(RTRIM(@MANV)) = '')
+       OR (@MAHP IS NULL OR LTRIM(RTRIM(@MAHP)) = '')  
+    BEGIN
+        RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
 
     INSERT INTO LOP(MALOP, TENLOP, MANV, MAHP)
     VALUES (@MALOP, @TENLOP, @MANV, @MAHP);
@@ -259,13 +286,27 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    -- 1. KIỂM TRA CÁC GIÁ TRỊ ĐẦU VÀO CÓ BỊ NULL HAY KHÔNG
+    -- Bạn có thể bỏ bớt các biến không bắt buộc (ví dụ: DIACHI nếu bảng cho phép NULL)
+    IF (@MANV IS NULL OR LTRIM(RTRIM(@MANV)) = '')
+       OR (@HOTEN IS NULL OR LTRIM(RTRIM(@HOTEN)) = '')
+       OR (@MK IS NULL) -- VARBINARY không dùng LTRIM được
+       OR (@MALOP IS NULL OR LTRIM(RTRIM(@MALOP)) = '')
+       OR (@TENDN IS NULL OR LTRIM(RTRIM(@TENDN)) = '')
+    BEGIN
+        RAISERROR(N'Dữ liệu đầu vào không được để trống (NULL). Vui lòng kiểm tra lại.', 16, 1);
+        RETURN;
+    END
+
+    -- 2. KIỂM TRA PHÂN QUYỀN (Code cũ của bạn)
     IF NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
-       AND NOT EXISTS (SELECT 1 FROM LOP WHERE MALOP = @MALOP AND MANV = @MANV_LOGIN)
+    AND NOT EXISTS (SELECT 1 FROM LOP WHERE MALOP = @MALOP AND MANV = @MANV_LOGIN)
     BEGIN
         RAISERROR(N'Nhan vien dang nhap khong co quyen them sinh vien vao lop nay.', 16, 1);
         RETURN;
     END
 
+    -- 3. THỰC HIỆN INSERT KHI TẤT CẢ ĐIỀU KIỆN ĐÃ HỢP LỆ
     INSERT INTO SINHVIEN(MASV, HOTEN, NGAYSINH, DIACHI, MALOP, TENDN, MATKHAU)
     VALUES (@MASV, @HOTEN, @NGAYSINH, @DIACHI, @MALOP, @TENDN, @MK);
 END
@@ -302,6 +343,35 @@ BEGIN
 END
 GO
 
+IF OBJECT_ID('SP_DEL_SV','P') IS NOT NULL
+    DROP PROCEDURE SP_DEL_SV;
+GO
+CREATE PROCEDURE SP_DEL_SV
+    @MASV NVARCHAR(20),
+    @HOTEN NVARCHAR(100),
+    @NGAYSINH DATE,
+    @DIACHI NVARCHAR(200),
+    @MANV_LOGIN VARCHAR(20)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
+       AND NOT EXISTS (
+        SELECT 1
+        FROM SINHVIEN SV
+        JOIN LOP L ON L.MALOP = SV.MALOP
+        WHERE SV.MASV = @MASV AND L.MANV = @MANV_LOGIN
+    )
+    BEGIN
+        RAISERROR(N'Nhan vien dang nhap khong co quyen sua sinh vien nay.', 16, 1);
+        RETURN;
+    END
+
+    DELETE FROM SINHVIEN WHERE MASV = @MASV;
+END
+GO
+
 IF OBJECT_ID('SP_INS_BANGDIEM_ENCRYPT','P') IS NOT NULL
     DROP PROCEDURE SP_INS_BANGDIEM_ENCRYPT;
 GO
@@ -313,6 +383,15 @@ CREATE PROCEDURE SP_INS_BANGDIEM_ENCRYPT
 AS
 BEGIN
     SET NOCOUNT ON;
+
+    IF (@MASV IS NULL OR LTRIM(RTRIM(@MASV)) = '')
+       OR (@MAHP IS NULL OR LTRIM(RTRIM(@MAHP)) = '')
+       OR (@DIEMTHI IS NULL)
+       OR (@MANV_LOGIN IS NULL OR LTRIM(RTRIM(@MANV_LOGIN)) = '')
+    BEGIN
+        RAISERROR(N'Lỗi: Thông tin sinh viên, học phần, điểm thi và người nhập không hợp lệ.', 16, 1);
+        RETURN;
+    END
 
     IF NOT EXISTS (SELECT 1 FROM NHANVIEN WHERE MANV = @MANV_LOGIN AND VAITRO = 'ADMIN')
        AND NOT EXISTS (
